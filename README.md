@@ -257,7 +257,7 @@ ai-lead-qualification-system/
 
 ## 🎬 Portfolio Demo
 
-> 📹 [Watch the full live demo video](YOUR_LOOM_LINK_HERE)
+> 📹 [Watch the full live demo video](https://www.loom.com/share/7b9cf0e708e7469eb838c1146e7f0c5f)
 
 The demo shows:
 1. Live Tally form submission
