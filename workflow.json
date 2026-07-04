@@ -1,0 +1,279 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbound-leads",
+        "options": {}
+      },
+      "id": "427c7edd-8c75-4620-b1d2-0ba494b6e1d7",
+      "name": "Tally Inbound Form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -992,
+        -176
+      ],
+      "webhookId": "f7e6d5c4-b3a2-1098-fedc-ba9876543210"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.1-8b-instant\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a strict lead qualification engine. Return ONLY a raw JSON object with exactly two keys: 'status' (string, either 'qualified' or 'unqualified') and 'lead_score' (integer between 1 and 100). No markdown, no code fences, no explanations whatsoever. A lead is qualified if they have a clear business need and a budget above $500.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ 'Lead Need: ' + $json.body.data.fields.find(f => f.label === 'What do you need help with?').value + ' | Budget: ' + $json.body.data.fields.find(f => f.label === 'Budget').value }}\"\n    }\n  ],\n  \"temperature\": 0.1,\n  \"max_tokens\": 60\n}",
+        "options": {}
+      },
+      "id": "fa4a7bb6-c765-47fc-8249-4ec1f129d4af",
+      "name": "Groq Lead Qualifier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -816,
+        -176
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "6j2lEMgwhaMfFXn8",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawContent = $input.first().json.choices[0].message.content.trim();\n\n// Log raw content for debugging\nconsole.log('Raw Groq response:', rawContent);\n\nlet parsed;\ntry {\n  parsed = JSON.parse(rawContent);\n} catch (e) {\n  // Try cleaning markdown fences\n  const cleaned = rawContent.replace(/```json|```/gi, '').trim();\n  try {\n    parsed = JSON.parse(cleaned);\n  } catch (e2) {\n    throw new Error('Groq returned invalid JSON: ' + rawContent);\n  }\n}\n\n// Force lead_score to number\nparsed.lead_score = parseInt(parsed.lead_score, 10);\n\n// If still invalid, default to 50\nif (isNaN(parsed.lead_score) || parsed.lead_score < 1 || parsed.lead_score > 100) {\n  parsed.lead_score = 50;\n}\n\n// Default status if missing\nif (!parsed.status || !['qualified', 'unqualified'].includes(parsed.status)) {\n  parsed.status = 'unqualified';\n}\n\n// Try all possible Tally data paths\nconst webhookData = $('Tally Inbound Form').first().json;\nconst fields = \n  webhookData?.data?.fields ||\n  webhookData?.body?.data?.fields ||\n  webhookData?.body?.fields ||\n  webhookData?.fields ||\n  [];\n\nconst getField = (label) => {\n  const field = fields.find(f => f.label === label);\n  return field ? field.value : 'N/A';\n};\n\nreturn [{\n  json: {\n    status: parsed.status,\n    lead_score: parsed.lead_score,\n    Name: getField('Name'),\n    Email: getField('Email'),\n    Budget: getField('Budget'),\n    Need: getField('What do you need help with?')\n  }\n}];"
+      },
+      "id": "6c4dbea3-34c6-4bf7-8c07-92c5f8d94be8",
+      "name": "Parse Groq Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-001-qualified-check",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "qualified",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5f427d75-ad56-4d9b-b978-cf9bc61ab704",
+      "name": "Check If Qualified",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        -224
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "appToken",
+        "email": "=={{ $('Parse Groq Response').first().json.Email }}",
+        "additionalFields": {
+          "companyName": "==AI Score: {{ $('Parse Groq Response').first().json.lead_score }}/100 — {{ $('Parse Groq Response').first().json.Need }}",
+          "firstName": "=={{ $('Parse Groq Response').first().json.Name.split(' ')[0] }}",
+          "lastName": "=={{ $('Parse Groq Response').first().json.Name.split(' ').slice(1).join(' ') }}"
+        },
+        "options": {
+          "resolveData": false
+        }
+      },
+      "id": "d4d3d02b-1c78-4023-a726-e02c7ac3f3cd",
+      "name": "Create HubSpot Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -320
+      ],
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "bqOEQ3OdudWoHfej",
+          "name": "HubSpot App Token account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "4cc61933-18ae-4fc9-bd07-1ce883ea1529",
+      "name": "Drop Unqualified Lead",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "cecilmutero66@gmail.com",
+        "subject": "==🔥 New Qualified Lead: {{ $('Parse Groq Response').first().json.Name }}",
+        "message": "==<h2>New Qualified Lead Alert!</h2>\n<p><strong>Name:</strong> {{ $('Parse Groq Response').first().json.Name }}</p>\n<p><strong>Email:</strong> {{ $('Parse Groq Response').first().json.Email }}</p>\n<p><strong>Budget:</strong> {{ $('Parse Groq Response').first().json.Budget }}</p>\n<p><strong>Need:</strong> {{ $('Parse Groq Response').first().json.Need }}</p>\n<p><strong>AI Lead Score:</strong> {{ $('Parse Groq Response').first().json.lead_score }}/100</p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -16,
+        -320
+      ],
+      "id": "8bf9ec45-2d0e-4048-92d0-d7f4db9bb853",
+      "name": "Send a message",
+      "webhookId": "b37a9fc6-b8b6-42df-861c-a8b4aeeff457",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "rBo249RUgWdkABj7",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0BC271PKEZ",
+          "mode": "list",
+          "cachedResultName": "qualified-leads"
+        },
+        "text": "=🔥 *New Qualified Lead!*\n*Name:* {{ $('Parse Groq Response').first().json.Name }}\n*Email:* {{ $('Parse Groq Response').first().json.Email }}\n*Budget:* {{ $('Parse Groq Response').first().json.Budget }}\n*Need:* {{ $('Parse Groq Response').first().json.Need }}\n*AI Score:* {{ $('Parse Groq Response').first().json.lead_score }}/100",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        -336
+      ],
+      "id": "cd450cc2-df83-4cc6-81b0-601871b28d9f",
+      "name": "Send a message1",
+      "webhookId": "abce3857-c085-4779-9abf-077f2e7449cd",
+      "credentials": {
+        "slackApi": {
+          "id": "NSYOqv6zDdidKDw2",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Tally Inbound Form": {
+      "main": [
+        [
+          {
+            "node": "Groq Lead Qualifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Lead Qualifier": {
+      "main": [
+        [
+          {
+            "node": "Parse Groq Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Groq Response": {
+      "main": [
+        [
+          {
+            "node": "Check If Qualified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Qualified": {
+      "main": [
+        [
+          {
+            "node": "Create HubSpot Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Unqualified Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create HubSpot Contact": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "70c3869d-d952-49e6-bbf2-ab46ff46842f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0cbf2bc6b216efe3994a777cf01a1fa84b2e2dc0a47225c0cda71dcd07fce89f"
+  },
+  "id": "3UDtgoNZ6QnJyHk8",
+  "tags": []
+}
